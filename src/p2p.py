@@ -50,7 +50,7 @@ def receive_data():
                 ball_x, ball_y = received_ball_x, received_ball_y
                 ball_speed_x, ball_speed_y = received_ball_speed_x, received_ball_speed_y
         except:
-            break
+            continue
 
 threading.Thread(target=receive_data, daemon=True).start()
 
@@ -82,7 +82,7 @@ while running:
             ball_x, ball_y = screen_width // 2, screen_height // 2
             ball_speed_x *= -1
     
-    # Send player's paddle position
+    # Non-host now continuously sends paddle updates too
     game_state = pickle.dumps((paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y))
     sock.sendto(game_state, peer_addr)
 
