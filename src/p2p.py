@@ -83,13 +83,42 @@ def setup_network():
     is_host = role.lower() == "yes"
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", PORT))
+    sock.settimeout(5)
 
     if is_host:
-        peer_addr = (peer_ip, PORT)
+        sock.bind(("0.0.0.0", PORT))
+        print(f"[HOST] Waiting for client on {PORT}...")
+        
+        try:
+            msg, peer_addr = sock.recvfrom(BUFFER_SIZE)
+            if msg == b"HELLO":
+                print(f"[HOST] Client connected from {peer_addr}")
+                sock.sendto(b"HELLO_ACK", peer_addr)
+            else:
+                print("[HOST] Unexpected message. Connection failed.")
+                exit()
+        except socket.timeout:
+            print("[HOST] No client connected. Timeout.")
+            exit()
+    
     else:
+        sock.bind(("0.0.0.0", 0))
+        print(f"[CLIENT] Bound to {sock.getsockname()[1]}")
+        print(f"[CLIENT] Connecting to host {peer_ip}:{PORT}...")
+
         sock.sendto(b"HELLO", (peer_ip, PORT))
-        _, peer_addr = sock.recvfrom(BUFFER_SIZE)
+        
+        try:
+            msg, host_addr = sock.recvfrom(BUFFER_SIZE)
+            if msg == b"HELLO_ACK":
+                print("[CLIENT] Connected to host!")
+                peer_addr = host_addr  # Set peer_addr for the client
+            else:
+                print("[CLIENT] Unexpected response from host.")
+                exit()
+        except socket.timeout:
+            print("[CLIENT] No response from host. Timeout.")
+            exit()
 
     return sock, peer_addr, is_host
 
@@ -135,11 +164,27 @@ def update_ball(state):
 
 def draw_game(state, is_host):
     screen.fill((0, 0, 0))
-    pygame.draw.rect(screen, (255, 255, 255), (50, state['paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
-    pygame.draw.rect(screen, (255, 255, 255), (SCREEN_WIDTH - 50 - PADDLE_WIDTH, state['opponent_paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
-    pygame.draw.ellipse(screen, (255, 255, 255), (state['ball_x'], state['ball_y'], BALL_SIZE, BALL_SIZE))
+
+    ball_x = state['ball_x']
+    if not is_host:
+        # 🟠 Flip positions for the client
+        paddle_x = SCREEN_WIDTH - 50 - PADDLE_WIDTH
+        opponent_x = 50
+    else:
+        # 🟢 Normal positions for the host
+        paddle_x = 50
+        opponent_x = SCREEN_WIDTH - 50 - PADDLE_WIDTH
+
+    # Draw paddles and ball
+    pygame.draw.rect(screen, (255, 255, 255), (paddle_x, state['paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
+    pygame.draw.rect(screen, (255, 255, 255), (opponent_x, state['opponent_paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
+    pygame.draw.ellipse(screen, (255, 255, 255), (ball_x, state['ball_y'], BALL_SIZE, BALL_SIZE))
+
+    # Draw center line
     pygame.draw.aaline(screen, (255, 255, 255), (SCREEN_WIDTH // 2, 0), (SCREEN_WIDTH // 2, SCREEN_HEIGHT))
+    
     pygame.display.flip()
+
 
 
 def main():
