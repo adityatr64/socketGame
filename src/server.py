@@ -4,7 +4,7 @@ import pickle
 import time
 
 # Server settings
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"
 PORT = 5555
 
 # Game settings
