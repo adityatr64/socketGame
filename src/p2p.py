@@ -3,10 +3,9 @@ import socket
 import threading
 import pickle
 
-# Constants
 PORT = 5555
 BUFFER_SIZE = 1024
-SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
+FIXED_WIDTH, FIXED_HEIGHT = 800, 600  # Fixed internal resolution
 PADDLE_WIDTH, PADDLE_HEIGHT = 10, 100
 BALL_SIZE = 20
 BALL_SPEED = 3
@@ -15,24 +14,36 @@ GAME_SPEED = 60
 
 # Initialize Pygame
 pygame.init()
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+screen = pygame.display.set_mode((FIXED_WIDTH, FIXED_HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("P2P Pong")
 clock = pygame.time.Clock()
 
+# Track current window size
+current_resolution = (FIXED_WIDTH, FIXED_HEIGHT)
 
 def loading_screen():
     font = pygame.font.Font(None, 36)
     input_box_ip = pygame.Rect(200, 200, 400, 50)
     input_box_role = pygame.Rect(200, 300, 400, 50)
+    dropdown_box = pygame.Rect(200, 400, 400, 50)
+
     color_inactive = pygame.Color('darkorange')
     color_active = pygame.Color('gold')
+    color_hover = pygame.Color('yellow')
+
     ip_text = ''
     role_text = ''
     active_box = None
-    
+
+    # Dropdown options
+    resolutions = ["400x300","800x600", "1024x768", "1280x720"]
+    selected_resolution = resolutions[1]  # Default to 800x600
+    dropdown_open = False
+
     while True:
         screen.fill((0, 0, 0))
-        
+        mouse_pos = pygame.mouse.get_pos()
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -42,8 +53,27 @@ def loading_screen():
                     active_box = 'ip'
                 elif input_box_role.collidepoint(event.pos):
                     active_box = 'role'
+                elif dropdown_box.collidepoint(event.pos):
+                    dropdown_open = not dropdown_open
                 else:
                     active_box = None
+                    
+                    # Only close dropdown if clicking outside dropdown area when it's open
+                    if dropdown_open:
+                        dropdown_area = pygame.Rect(200, 450, 400, 40 * len(resolutions))
+                        if not dropdown_area.collidepoint(event.pos):
+                            dropdown_open = False
+
+                # Handle dropdown item selection
+                if dropdown_open:
+                    for i, res in enumerate(resolutions):
+                        option_rect = pygame.Rect(200, 450 + i * 40, 400, 40)
+                        if option_rect.collidepoint(event.pos):
+                            selected_resolution = res
+                            dropdown_open = False  # Close the dropdown
+                            # Don't change resolution yet, just store the selection
+                            break
+
             if event.type == pygame.KEYDOWN:
                 if active_box == 'ip':
                     if event.key == pygame.K_RETURN:
@@ -54,7 +84,7 @@ def loading_screen():
                         ip_text += event.unicode
                 elif active_box == 'role':
                     if event.key == pygame.K_RETURN and role_text.lower() in ['yes', 'no']:
-                        return ip_text, role_text
+                        return ip_text, role_text, selected_resolution
                     elif event.key == pygame.K_BACKSPACE:
                         role_text = role_text[:-1]
                     else:
@@ -65,22 +95,50 @@ def loading_screen():
 
         txt_surface_ip = font.render(ip_text, True, color_ip)
         txt_surface_role = font.render(role_text, True, color_role)
+        txt_surface_res = font.render(selected_resolution, True, color_active)
 
+        # Render input fields
         screen.blit(font.render("Enter Opponent's IP:", True, (255, 255, 255)), (200, 150))
         screen.blit(font.render("Are you hosting? (yes/no):", True, (255, 255, 255)), (200, 250))
+        screen.blit(font.render("Select resolution:", True, (255, 255, 255)), (200, 350))
         screen.blit(txt_surface_ip, (input_box_ip.x + 10, input_box_ip.y + 10))
         screen.blit(txt_surface_role, (input_box_role.x + 10, input_box_role.y + 10))
+        screen.blit(txt_surface_res, (dropdown_box.x + 10, dropdown_box.y + 10))
 
         pygame.draw.rect(screen, color_ip, input_box_ip, 2)
         pygame.draw.rect(screen, color_role, input_box_role, 2)
-        
+        pygame.draw.rect(screen, color_active, dropdown_box, 2)
+
+        # Render dropdown options
+        if dropdown_open:
+            for i, res in enumerate(resolutions):
+                option_rect = pygame.Rect(200, 450 + i * 40, 400, 40)
+
+                # Highlight on hover
+                if option_rect.collidepoint(mouse_pos):
+                    pygame.draw.rect(screen, color_hover, option_rect)
+                else:
+                    pygame.draw.rect(screen, color_inactive, option_rect)
+
+                screen.blit(font.render(res, True, (0, 0, 0)), (option_rect.x + 10, option_rect.y + 10))
+
         pygame.display.flip()
         clock.tick(GAME_SPEED)
 
 
 def setup_network():
-    peer_ip, role = loading_screen()
+    peer_ip, role, res_text = loading_screen()
     is_host = role.lower() == "yes"
+
+    # Parse the resolution
+    global current_resolution
+    try:
+        width, height = map(int, res_text.split('x'))
+        current_resolution = (width, height)
+        pygame.display.set_mode(current_resolution, pygame.RESIZABLE)
+    except:
+        print("[ERROR] Invalid resolution format. Using default resolution.")
+        current_resolution = (FIXED_WIDTH, FIXED_HEIGHT)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(5)
@@ -140,7 +198,7 @@ def handle_input(state):
     keys = pygame.key.get_pressed()
     if keys[pygame.K_w] and state['paddle_y'] > 0:
         state['paddle_y'] -= PADDLE_SPEED
-    if keys[pygame.K_s] and state['paddle_y'] < SCREEN_HEIGHT - PADDLE_HEIGHT:
+    if keys[pygame.K_s] and state['paddle_y'] < FIXED_HEIGHT - PADDLE_HEIGHT:
         state['paddle_y'] += PADDLE_SPEED
     if keys[pygame.K_ESCAPE] or keys[pygame.K_q]:
         end_game()
@@ -150,39 +208,37 @@ def update_ball(state):
     state['ball_x'] += state['ball_speed_x']
     state['ball_y'] += state['ball_speed_y']
 
-    if state['ball_y'] <= 0 or state['ball_y'] + BALL_SIZE >= SCREEN_HEIGHT:
+    if state['ball_y'] <= 0 or state['ball_y'] + BALL_SIZE >= FIXED_HEIGHT:
         state['ball_speed_y'] *= -1
 
     if (50 <= state['ball_x'] <= 50 + PADDLE_WIDTH and state['paddle_y'] <= state['ball_y'] + BALL_SIZE // 2 <= state['paddle_y'] + PADDLE_HEIGHT) or \
-       (SCREEN_WIDTH - 50 - PADDLE_WIDTH <= state['ball_x'] + BALL_SIZE <= SCREEN_WIDTH - 50 and state['opponent_paddle_y'] <= state['ball_y'] + BALL_SIZE // 2 <= state['opponent_paddle_y'] + PADDLE_HEIGHT):
+       (FIXED_WIDTH - 50 - PADDLE_WIDTH <= state['ball_x'] + BALL_SIZE <= FIXED_WIDTH - 50 and state['opponent_paddle_y'] <= state['ball_y'] + BALL_SIZE // 2 <= state['opponent_paddle_y'] + PADDLE_HEIGHT):
         state['ball_speed_x'] *= -1
 
-    if state['ball_x'] <= 0 or state['ball_x'] >= SCREEN_WIDTH:
-        state['ball_x'], state['ball_y'] = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
+    if state['ball_x'] <= 0 or state['ball_x'] >= FIXED_WIDTH:
+        state['ball_x'], state['ball_y'] = FIXED_WIDTH // 2, FIXED_HEIGHT // 2
         state['ball_speed_x'] *= -1
 
 
 def draw_game(state, is_host):
-    screen.fill((0, 0, 0))
+    fixed_surface = pygame.Surface((FIXED_WIDTH, FIXED_HEIGHT))
+    fixed_surface.fill((0, 0, 0))
 
     ball_x = state['ball_x']
     if not is_host:
-        # 🟠 Flip positions for the client
-        paddle_x = SCREEN_WIDTH - 50 - PADDLE_WIDTH
+        paddle_x = FIXED_WIDTH - 50 - PADDLE_WIDTH
         opponent_x = 50
     else:
-        # 🟢 Normal positions for the host
         paddle_x = 50
-        opponent_x = SCREEN_WIDTH - 50 - PADDLE_WIDTH
+        opponent_x = FIXED_WIDTH - 50 - PADDLE_WIDTH
 
-    # Draw paddles and ball
-    pygame.draw.rect(screen, (255, 255, 255), (paddle_x, state['paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
-    pygame.draw.rect(screen, (255, 255, 255), (opponent_x, state['opponent_paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
-    pygame.draw.ellipse(screen, (255, 255, 255), (ball_x, state['ball_y'], BALL_SIZE, BALL_SIZE))
+    pygame.draw.rect(fixed_surface, (255, 255, 255), (paddle_x, state['paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
+    pygame.draw.rect(fixed_surface, (255, 255, 255), (opponent_x, state['opponent_paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
+    pygame.draw.ellipse(fixed_surface, (255, 255, 255), (ball_x, state['ball_y'], BALL_SIZE, BALL_SIZE))
+    pygame.draw.aaline(fixed_surface, (255, 255, 255), (FIXED_WIDTH // 2, 0), (FIXED_WIDTH // 2, FIXED_HEIGHT))
 
-    # Draw center line
-    pygame.draw.aaline(screen, (255, 255, 255), (SCREEN_WIDTH // 2, 0), (SCREEN_WIDTH // 2, SCREEN_HEIGHT))
-    
+    scaled_surface = pygame.transform.scale(fixed_surface, current_resolution)
+    screen.blit(scaled_surface, (0, 0))
     pygame.display.flip()
 
 
@@ -191,10 +247,10 @@ def main():
     sock, peer_addr, is_host = setup_network()
 
     state = {
-        'paddle_y': (SCREEN_HEIGHT - PADDLE_HEIGHT) // 2,
-        'opponent_paddle_y': (SCREEN_HEIGHT - PADDLE_HEIGHT) // 2,
-        'ball_x': SCREEN_WIDTH // 2,
-        'ball_y': SCREEN_HEIGHT // 2,
+        'paddle_y': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
+        'opponent_paddle_y': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
+        'ball_x': FIXED_WIDTH // 2,
+        'ball_y': FIXED_HEIGHT // 2,
         'ball_speed_x': BALL_SPEED,
         'ball_speed_y': BALL_SPEED,
     }
@@ -222,7 +278,11 @@ def main():
 
 def end_game():
     print("Exiting game...")
-    socket.socket(socket.AF_INET, socket.SOCK_DGRAM).close()
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.close()
+    except:
+        pass
     pygame.quit()
     exit()
 
