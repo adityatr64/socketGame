@@ -13,11 +13,12 @@ ball_size = 20
 # Networking Setup
 peer_ip = input("Enter opponent's IP: ")
 role = input("Are you hosting? (yes/no): ")
+is_host = role.lower() == "yes"
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("0.0.0.0", PORT))
 
-if role.lower() == "yes":
+if is_host:
     peer_addr = (peer_ip, PORT)
 else:
     sock.sendto(b"HELLO", (peer_ip, PORT))
@@ -37,11 +38,12 @@ running = True
 
 # Function to receive updates
 def receive_data():
-    global paddle_y, opponent_paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y
+    global opponent_paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y
     while running:
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
-            paddle_y, opponent_paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y = pickle.loads(data)
+            received_paddle, ball_x, ball_y, ball_speed_x, ball_speed_y = pickle.loads(data)
+            opponent_paddle_y = received_paddle
         except:
             break
 
@@ -60,7 +62,7 @@ while running:
         paddle_y += 5
     
     # Host manages ball physics
-    if role.lower() == "yes":
+    if is_host:
         ball_x += ball_speed_x
         ball_y += ball_speed_y
 
@@ -75,14 +77,18 @@ while running:
             ball_x, ball_y = screen_width // 2, screen_height // 2
             ball_speed_x *= -1
     
-    # Send state to peer
-    game_state = pickle.dumps((paddle_y, opponent_paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y))
+    # Send only player's paddle position
+    game_state = pickle.dumps((paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y))
     sock.sendto(game_state, peer_addr)
 
     # Drawing
     screen.fill((0, 0, 0))
-    pygame.draw.rect(screen, (255, 255, 255), (50, paddle_y, paddle_width, paddle_height))
-    pygame.draw.rect(screen, (255, 255, 255), (screen_width - 50 - paddle_width, opponent_paddle_y, paddle_width, paddle_height))
+    if is_host:
+        pygame.draw.rect(screen, (255, 255, 255), (50, paddle_y, paddle_width, paddle_height))
+        pygame.draw.rect(screen, (255, 255, 255), (screen_width - 50 - paddle_width, opponent_paddle_y, paddle_width, paddle_height))
+    else:
+        pygame.draw.rect(screen, (255, 255, 255), (screen_width - 50 - paddle_width, paddle_y, paddle_width, paddle_height))
+        pygame.draw.rect(screen, (255, 255, 255), (50, opponent_paddle_y, paddle_width, paddle_height))
     pygame.draw.ellipse(screen, (255, 255, 255), (ball_x, ball_y, ball_size, ball_size))
     pygame.draw.aaline(screen, (255, 255, 255), (screen_width // 2, 0), (screen_width // 2, screen_height))
     
