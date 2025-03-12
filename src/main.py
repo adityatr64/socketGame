@@ -1,8 +1,6 @@
 import pygame
 import sys
 
-# Initialize Pygame
-pygame.init()
 
 # Screen dimensions
 screen_width = 800
@@ -18,6 +16,9 @@ paddle_height = 100
 
 # Ball dimensions
 ball_size = 20
+
+# Initialize Pygame
+pygame.init()
 
 # Screen setup
 screen = pygame.display.set_mode((screen_width, screen_height))
@@ -55,7 +56,8 @@ while running:
     paddle2_y -= paddle_speed
   if keys[pygame.K_DOWN] and paddle2_y < screen_height - paddle_height:
     paddle2_y += paddle_speed
-
+  if keys[pygame.K_ESCAPE]:
+    running = False
   # Ball movement
   ball_x += ball_speed_x
   ball_y += ball_speed_y
@@ -67,7 +69,7 @@ while running:
   # Ball collision with paddles
   if (paddle1_x < ball_x < paddle1_x + paddle_width and
       paddle1_y < ball_y < paddle1_y + paddle_height) or (
-      paddle2_x < ball_x < paddle2_x + paddle_width and
+      paddle2_x < ball_x + ball_size < paddle2_x + paddle_width and
       paddle2_y < ball_y < paddle2_y + paddle_height):
     ball_speed_x *= -1
 
