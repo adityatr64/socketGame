@@ -4,7 +4,7 @@ import socket
 import pickle
 import threading
 
-SERVER_IP = "127.0.0.1"
+SERVER_IP = "10.1.2.176"
 PORT = 5555
 
 pygame.init()

@@ -36,7 +36,7 @@ def game_loop():
     global ball_x, ball_y, ball_speed_x, ball_speed_y, paddle1_y, paddle2_y
     
     while True:
-        time.sleep(1/60)
+        time.sleep(1/80)
 
         with lock:
             ball_x += ball_speed_x
