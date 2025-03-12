@@ -3,103 +3,183 @@ import socket
 import threading
 import pickle
 
-# Configurations
+# Constants
 PORT = 5555
 BUFFER_SIZE = 1024
-screen_width, screen_height = 800, 600
-paddle_width, paddle_height = 10, 100
-ball_size = 20
+SCREEN_WIDTH, SCREEN_HEIGHT = 800, 600
+PADDLE_WIDTH, PADDLE_HEIGHT = 10, 100
+BALL_SIZE = 20
+BALL_SPEED = 3
+PADDLE_SPEED = 5
+GAME_SPEED = 60
 
-# Networking Setup
-peer_ip = input("Enter opponent's IP: ")
-role = input("Are you hosting? (yes/no): ")
-is_host = role.lower() == "yes"
-
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(("0.0.0.0", PORT))
-
-if is_host:
-    peer_addr = (peer_ip, PORT)
-else:
-    sock.sendto(b"HELLO", (peer_ip, PORT))
-    data, peer_addr = sock.recvfrom(BUFFER_SIZE)
-
-# Pygame Initialization
+# Initialize Pygame
 pygame.init()
-screen = pygame.display.set_mode((screen_width, screen_height))
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("P2P Pong")
+clock = pygame.time.Clock()
 
-# Game State
-paddle_y = (screen_height - paddle_height) // 2
-opponent_paddle_y = (screen_height - paddle_height) // 2
-ball_x, ball_y = screen_width // 2, screen_height // 2
-ball_speed_x, ball_speed_y = 3, 3
-running = True
 
-# Function to receive updates
-def receive_data():
-    global opponent_paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y
-    while running:
+def loading_screen():
+    font = pygame.font.Font(None, 36)
+    input_box_ip = pygame.Rect(200, 200, 400, 50)
+    input_box_role = pygame.Rect(200, 300, 400, 50)
+    color_inactive = pygame.Color('darkorange')
+    color_active = pygame.Color('gold')
+    ip_text = ''
+    role_text = ''
+    active_box = None
+    
+    while True:
+        screen.fill((0, 0, 0))
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if input_box_ip.collidepoint(event.pos):
+                    active_box = 'ip'
+                elif input_box_role.collidepoint(event.pos):
+                    active_box = 'role'
+                else:
+                    active_box = None
+            if event.type == pygame.KEYDOWN:
+                if active_box == 'ip':
+                    if event.key == pygame.K_RETURN:
+                        active_box = 'role'
+                    elif event.key == pygame.K_BACKSPACE:
+                        ip_text = ip_text[:-1]
+                    else:
+                        ip_text += event.unicode
+                elif active_box == 'role':
+                    if event.key == pygame.K_RETURN and role_text.lower() in ['yes', 'no']:
+                        return ip_text, role_text
+                    elif event.key == pygame.K_BACKSPACE:
+                        role_text = role_text[:-1]
+                    else:
+                        role_text += event.unicode
+
+        color_ip = color_active if active_box == 'ip' else color_inactive
+        color_role = color_active if active_box == 'role' else color_inactive
+
+        txt_surface_ip = font.render(ip_text, True, color_ip)
+        txt_surface_role = font.render(role_text, True, color_role)
+
+        screen.blit(font.render("Enter Opponent's IP:", True, (255, 255, 255)), (200, 150))
+        screen.blit(font.render("Are you hosting? (yes/no):", True, (255, 255, 255)), (200, 250))
+        screen.blit(txt_surface_ip, (input_box_ip.x + 10, input_box_ip.y + 10))
+        screen.blit(txt_surface_role, (input_box_role.x + 10, input_box_role.y + 10))
+
+        pygame.draw.rect(screen, color_ip, input_box_ip, 2)
+        pygame.draw.rect(screen, color_role, input_box_role, 2)
+        
+        pygame.display.flip()
+        clock.tick(GAME_SPEED)
+
+
+def setup_network():
+    peer_ip, role = loading_screen()
+    is_host = role.lower() == "yes"
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("0.0.0.0", PORT))
+
+    if is_host:
+        peer_addr = (peer_ip, PORT)
+    else:
+        sock.sendto(b"HELLO", (peer_ip, PORT))
+        _, peer_addr = sock.recvfrom(BUFFER_SIZE)
+
+    return sock, peer_addr, is_host
+
+
+def receive_data(sock, is_host, state, running):
+    while running[0]:
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
-            received_paddle, received_ball_x, received_ball_y, received_ball_speed_x, received_ball_speed_y = pickle.loads(data)
-            opponent_paddle_y = received_paddle
-            
+            received_data = pickle.loads(data)
+            state['opponent_paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y'] = received_data
+
             if not is_host:
-                global ball_x, ball_y, ball_speed_x, ball_speed_y
-                ball_x, ball_y = received_ball_x, received_ball_y
-                ball_speed_x, ball_speed_y = received_ball_speed_x, received_ball_speed_y
+                state['ball_x'], state['ball_y'] = received_data[1:3]
         except:
             continue
 
-threading.Thread(target=receive_data, daemon=True).start()
 
-# Main Game Loop
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-    
+def handle_input(state):
     keys = pygame.key.get_pressed()
-    if keys[pygame.K_w] and paddle_y > 0:
-        paddle_y -= 5
-    if keys[pygame.K_s] and paddle_y < screen_height - paddle_height:
-        paddle_y += 5
-    
-    # Host manages ball physics
-    if is_host:
-        ball_x += ball_speed_x
-        ball_y += ball_speed_y
+    if keys[pygame.K_w] and state['paddle_y'] > 0:
+        state['paddle_y'] -= PADDLE_SPEED
+    if keys[pygame.K_s] and state['paddle_y'] < SCREEN_HEIGHT - PADDLE_HEIGHT:
+        state['paddle_y'] += PADDLE_SPEED
+    if keys[pygame.K_ESCAPE] or keys[pygame.K_q]:
+        end_game()
 
-        if ball_y <= 0 or ball_y >= screen_height - ball_size:
-            ball_speed_y *= -1
 
-        if (50 < ball_x < 60 and paddle_y < ball_y < paddle_y + paddle_height) or \
-           (screen_width - 60 < ball_x < screen_width - 50 and opponent_paddle_y < ball_y < opponent_paddle_y + paddle_height):
-            ball_speed_x *= -1
+def update_ball(state):
+    state['ball_x'] += state['ball_speed_x']
+    state['ball_y'] += state['ball_speed_y']
 
-        if ball_x <= 0 or ball_x >= screen_width:
-            ball_x, ball_y = screen_width // 2, screen_height // 2
-            ball_speed_x *= -1
-    
-    # Non-host now continuously sends paddle updates too
-    game_state = pickle.dumps((paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y))
-    sock.sendto(game_state, peer_addr)
+    if state['ball_y'] <= 0 or state['ball_y'] + BALL_SIZE >= SCREEN_HEIGHT:
+        state['ball_speed_y'] *= -1
 
-    # Drawing
+    if (50 <= state['ball_x'] <= 50 + PADDLE_WIDTH and state['paddle_y'] <= state['ball_y'] + BALL_SIZE // 2 <= state['paddle_y'] + PADDLE_HEIGHT) or \
+       (SCREEN_WIDTH - 50 - PADDLE_WIDTH <= state['ball_x'] + BALL_SIZE <= SCREEN_WIDTH - 50 and state['opponent_paddle_y'] <= state['ball_y'] + BALL_SIZE // 2 <= state['opponent_paddle_y'] + PADDLE_HEIGHT):
+        state['ball_speed_x'] *= -1
+
+    if state['ball_x'] <= 0 or state['ball_x'] >= SCREEN_WIDTH:
+        state['ball_x'], state['ball_y'] = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
+        state['ball_speed_x'] *= -1
+
+
+def draw_game(state, is_host):
     screen.fill((0, 0, 0))
-    if is_host:
-        pygame.draw.rect(screen, (255, 255, 255), (50, paddle_y, paddle_width, paddle_height))
-        pygame.draw.rect(screen, (255, 255, 255), (screen_width - 50 - paddle_width, opponent_paddle_y, paddle_width, paddle_height))
-    else:
-        pygame.draw.rect(screen, (255, 255, 255), (screen_width - 50 - paddle_width, paddle_y, paddle_width, paddle_height))
-        pygame.draw.rect(screen, (255, 255, 255), (50, opponent_paddle_y, paddle_width, paddle_height))
-    pygame.draw.ellipse(screen, (255, 255, 255), (ball_x, ball_y, ball_size, ball_size))
-    pygame.draw.aaline(screen, (255, 255, 255), (screen_width // 2, 0), (screen_width // 2, screen_height))
-    
+    pygame.draw.rect(screen, (255, 255, 255), (50, state['paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
+    pygame.draw.rect(screen, (255, 255, 255), (SCREEN_WIDTH - 50 - PADDLE_WIDTH, state['opponent_paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
+    pygame.draw.ellipse(screen, (255, 255, 255), (state['ball_x'], state['ball_y'], BALL_SIZE, BALL_SIZE))
+    pygame.draw.aaline(screen, (255, 255, 255), (SCREEN_WIDTH // 2, 0), (SCREEN_WIDTH // 2, SCREEN_HEIGHT))
     pygame.display.flip()
-    pygame.time.Clock().tick(60)
 
-sock.close()
-pygame.quit()
 
+def main():
+    sock, peer_addr, is_host = setup_network()
+
+    state = {
+        'paddle_y': (SCREEN_HEIGHT - PADDLE_HEIGHT) // 2,
+        'opponent_paddle_y': (SCREEN_HEIGHT - PADDLE_HEIGHT) // 2,
+        'ball_x': SCREEN_WIDTH // 2,
+        'ball_y': SCREEN_HEIGHT // 2,
+        'ball_speed_x': BALL_SPEED,
+        'ball_speed_y': BALL_SPEED,
+    }
+
+    running = [True]
+
+    threading.Thread(target=receive_data, args=(sock, is_host, state, running), daemon=True).start()
+
+    while running[0]:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running[0] = False
+
+        handle_input(state)
+        if is_host:
+            update_ball(state)
+
+        game_state = pickle.dumps((state['paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y']))
+        sock.sendto(game_state, peer_addr)
+
+        draw_game(state, is_host)
+        clock.tick(GAME_SPEED)
+
+    end_game()
+
+def end_game():
+    print("Exiting game...")
+    socket.socket(socket.AF_INET, socket.SOCK_DGRAM).close()
+    pygame.quit()
+    exit()
+
+if __name__ == "__main__":
+    main()
