@@ -2,6 +2,7 @@ import pygame
 import socket
 import threading
 import pickle
+import struct # import struct
 
 PORT = 5555
 BUFFER_SIZE = 1024
@@ -185,14 +186,27 @@ def receive_data(sock, is_host, state, running):
     while running[0]:
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
-            received_data = pickle.loads(data)
+            opponent_paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y, player_score, opponent_score = struct.unpack('!iiiiiii', data)
 
-            state['opponent_paddle_y'], state['ball_x'], state['ball_y'], \
-                state['ball_speed_x'], state['ball_speed_y'], \
-                state['player_score'], state['opponent_score'] = received_data
+            # Dead reckoning: track previous position and calculate velocity
+            previous_y = state.get('opponent_paddle_y_previous', opponent_paddle_y)
+            velocity = opponent_paddle_y - previous_y
+            state['opponent_paddle_y_previous'] = opponent_paddle_y
+
+            state['opponent_paddle_y_target'] = opponent_paddle_y #update target
+            #predict the next position
+            state['opponent_paddle_y_predicted'] = opponent_paddle_y + velocity
+
+            state['ball_x'] = ball_x
+            state['ball_y'] = ball_y
+            state['ball_speed_x'] = ball_speed_x
+            state['ball_speed_y'] = ball_speed_y
+            state['player_score'] = player_score
+            state['opponent_score'] = opponent_score
 
             if not is_host:
-                state['ball_x'], state['ball_y'] = received_data[1:3]
+                state['ball_x'], state['ball_y'] = ball_x, ball_y
+
         except:
             continue
 
@@ -253,8 +267,6 @@ def draw_game(state, is_host):
     screen.blit(scaled_surface, (0, 0))
     pygame.display.flip()
 
-
-
 def main():
     sock, peer_addr, is_host = setup_network()
 
@@ -266,7 +278,8 @@ def main():
         'ball_speed_x': BALL_SPEED,
         'ball_speed_y': BALL_SPEED,
         'player_score': 0,
-        'opponent_score': 0
+        'opponent_score': 0,
+        'opponent_paddle_y_target': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2, #add target variable
     }
 
     running = [True]
@@ -282,13 +295,16 @@ def main():
         if is_host:
             update_ball(state)
 
-        game_state = pickle.dumps((
-        state['paddle_y'], state['ball_x'], state['ball_y'],
-        state['ball_speed_x'], state['ball_speed_y'],
-        state['player_score'], state['opponent_score']
-        ))
+        #use struct to pack data
+        game_state = struct.pack('!iiiiiii',
+            state['paddle_y'], state['ball_x'], state['ball_y'],
+            state['ball_speed_x'], state['ball_speed_y'],
+            state['player_score'], state['opponent_score']
+        )
         sock.sendto(game_state, peer_addr)
 
+        #interpolation
+        state['opponent_paddle_y'] += (state['opponent_paddle_y_target'] - state['opponent_paddle_y']) * 0.3
 
         draw_game(state, is_host)
         clock.tick(GAME_SPEED)
