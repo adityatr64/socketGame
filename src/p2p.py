@@ -183,10 +183,11 @@ def receive_data(sock, is_host, state, running):
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
             received_data = pickle.loads(data)
-            state['opponent_paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y'] = received_data
-
-            if not is_host:
-                state['ball_x'], state['ball_y'] = received_data[1:3]
+            if is_host:
+                state['opponent_paddle_y'] = received_data[0]  # Update opponent's paddle position
+                state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y'] = received_data[1:]
+            else:
+                state['opponent_paddle_y'] = received_data[0]
         except:
             continue
 
@@ -276,9 +277,14 @@ def main():
         handle_input(state)
         if is_host:
             update_ball(state)
+        # Send paddle position to opponent
+        if is_host:
+            game_state = pickle.dumps((state['paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y']))
+        else:
+             game_state = pickle.dumps((state['paddle_y'],))  # Clients send only their paddle position
 
-        game_state = pickle.dumps((state['paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y']))
-        sock.sendto(game_state, peer_addr)
+sock.sendto(game_state, peer_addr)
+
 
         draw_game(state, is_host)
         clock.tick(GAME_SPEED)
