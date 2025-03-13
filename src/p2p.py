@@ -186,12 +186,16 @@ def receive_data(sock, is_host, state, running):
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
             received_data = pickle.loads(data)
-            state['opponent_paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y'] = received_data
+
+            state['opponent_paddle_y'], state['ball_x'], state['ball_y'], \
+                state['ball_speed_x'], state['ball_speed_y'], \
+                state['player_score'], state['opponent_score'] = received_data
 
             if not is_host:
                 state['ball_x'], state['ball_y'] = received_data[1:3]
         except:
             continue
+
 
 
 def handle_input(state):
@@ -241,6 +245,10 @@ def draw_game(state, is_host):
     pygame.draw.ellipse(fixed_surface, (255, 255, 255), (ball_x, state['ball_y'], BALL_SIZE, BALL_SIZE))
     pygame.draw.aaline(fixed_surface, (255, 255, 255), (FIXED_WIDTH // 2, 0), (FIXED_WIDTH // 2, FIXED_HEIGHT))
 
+    font = pygame.font.Font(None, 36)
+    score_text = font.render(f"{state['player_score']}   {state['opponent_score']}", True, (255, 255, 255))
+    fixed_surface.blit(score_text, (FIXED_WIDTH // 2 - score_text.get_width() // 2, 10))
+
     scaled_surface = pygame.transform.scale(fixed_surface, current_resolution)
     screen.blit(scaled_surface, (0, 0))
     pygame.display.flip()
@@ -274,8 +282,13 @@ def main():
         if is_host:
             update_ball(state)
 
-        game_state = pickle.dumps((state['paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y']))
+        game_state = pickle.dumps((
+        state['paddle_y'], state['ball_x'], state['ball_y'],
+        state['ball_speed_x'], state['ball_speed_y'],
+        state['player_score'], state['opponent_score']
+        ))
         sock.sendto(game_state, peer_addr)
+
 
         draw_game(state, is_host)
         clock.tick(GAME_SPEED)
