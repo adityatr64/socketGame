@@ -215,9 +215,13 @@ def update_ball(state):
        (FIXED_WIDTH - 50 - PADDLE_WIDTH <= state['ball_x'] + BALL_SIZE <= FIXED_WIDTH - 50 and state['opponent_paddle_y'] <= state['ball_y'] + BALL_SIZE // 2 <= state['opponent_paddle_y'] + PADDLE_HEIGHT):
         state['ball_speed_x'] *= -1
 
-    if state['ball_x'] <= 0 or state['ball_x'] >= FIXED_WIDTH:
-        state['ball_x'], state['ball_y'] = FIXED_WIDTH // 2, FIXED_HEIGHT // 2
-        state['ball_speed_x'] *= -1
+    if state['ball_x'] <= 0:  # Ball goes past the left side (Player Loses)
+        state['opponent_score'] += 1
+        reset_ball(state)
+
+    if state['ball_x'] >= FIXED_WIDTH:  # Ball goes past the right side (Opponent Loses)
+        state['player_score'] += 1
+        reset_ball(state)
 
 
 def draw_game(state, is_host):
@@ -253,6 +257,8 @@ def main():
         'ball_y': FIXED_HEIGHT // 2,
         'ball_speed_x': BALL_SPEED,
         'ball_speed_y': BALL_SPEED,
+        'player_score': 0,
+        'opponent_score': 0
     }
 
     running = [True]
@@ -285,6 +291,11 @@ def end_game():
         pass
     pygame.quit()
     exit()
+
+def reset_ball(state):
+    state['ball_x'], state['ball_y'] = FIXED_WIDTH // 2, FIXED_HEIGHT // 2
+    state['ball_speed_x'] = BALL_SPEED
+    state['ball_speed_y'] = BALL_SPEED
 
 if __name__ == "__main__":
     main()
