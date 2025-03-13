@@ -5,7 +5,7 @@ import pickle
 
 PORT = 5555
 BUFFER_SIZE = 1024
-FIXED_WIDTH, FIXED_HEIGHT = 800, 600 
+FIXED_WIDTH, FIXED_HEIGHT = 800, 600  # Fixed internal resolution
 PADDLE_WIDTH, PADDLE_HEIGHT = 10, 100
 BALL_SIZE = 20
 BALL_SPEED = 3
@@ -71,6 +71,7 @@ def loading_screen():
                         if option_rect.collidepoint(event.pos):
                             selected_resolution = res
                             dropdown_open = False  # Close the dropdown
+                            # Don't change resolution yet, just store the selection
                             break
 
             if event.type == pygame.KEYDOWN:
@@ -124,6 +125,7 @@ def loading_screen():
         pygame.display.flip()
         clock.tick(GAME_SPEED)
 
+
 def setup_network():
     peer_ip, role, res_text = loading_screen()
     is_host = role.lower() == "yes"
@@ -135,7 +137,7 @@ def setup_network():
         current_resolution = (width, height)
         pygame.display.set_mode(current_resolution, pygame.RESIZABLE)
     except:
-        print("[ERROR] Invalid resolution format. Using default resolution.")   
+        print("[ERROR] Invalid resolution format. Using default resolution.")
         current_resolution = (FIXED_WIDTH, FIXED_HEIGHT)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -178,18 +180,19 @@ def setup_network():
 
     return sock, peer_addr, is_host
 
+
 def receive_data(sock, is_host, state, running):
     while running[0]:
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
             received_data = pickle.loads(data)
-            if is_host:
-                state['opponent_paddle_y'] = received_data[0]  # Update opponent's paddle position
-                state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y'] = received_data[1:]
-            else:
-                state['opponent_paddle_y'] = received_data[0]
+            state['opponent_paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y'] = received_data
+
+            if not is_host:
+                state['ball_x'], state['ball_y'] = received_data[1:3]
         except:
             continue
+
 
 def handle_input(state):
     keys = pygame.key.get_pressed()
@@ -199,6 +202,7 @@ def handle_input(state):
         state['paddle_y'] += PADDLE_SPEED
     if keys[pygame.K_ESCAPE] or keys[pygame.K_q]:
         end_game()
+
 
 def update_ball(state):
     state['ball_x'] += state['ball_speed_x']
@@ -211,20 +215,10 @@ def update_ball(state):
        (FIXED_WIDTH - 50 - PADDLE_WIDTH <= state['ball_x'] + BALL_SIZE <= FIXED_WIDTH - 50 and state['opponent_paddle_y'] <= state['ball_y'] + BALL_SIZE // 2 <= state['opponent_paddle_y'] + PADDLE_HEIGHT):
         state['ball_speed_x'] *= -1
 
-    if state['ball_x'] <= 0:  # Ball goes past the left side (Player Loses)
-        state['opponent_score'] += 1
-        reset_ball(state)
+    if state['ball_x'] <= 0 or state['ball_x'] >= FIXED_WIDTH:
+        state['ball_x'], state['ball_y'] = FIXED_WIDTH // 2, FIXED_HEIGHT // 2
+        state['ball_speed_x'] *= -1
 
-    if state['ball_x'] >= FIXED_WIDTH:  # Ball goes past the right side (Opponent Loses)
-        state['player_score'] += 1
-        reset_ball(state)
-
-
-def reset_ball(state):
-    """Reset ball to center with random direction."""
-    state['ball_x'], state['ball_y'] = FIXED_WIDTH // 2, FIXED_HEIGHT // 2
-    state['ball_speed_x'] = BALL_SPEED * (-1 if state['ball_speed_x'] > 0 else 1)
-    state['ball_speed_y'] = BALL_SPEED * (-1 if state['ball_speed_y'] > 0 else 1)
 
 def draw_game(state, is_host):
     fixed_surface = pygame.Surface((FIXED_WIDTH, FIXED_HEIGHT))
@@ -243,13 +237,11 @@ def draw_game(state, is_host):
     pygame.draw.ellipse(fixed_surface, (255, 255, 255), (ball_x, state['ball_y'], BALL_SIZE, BALL_SIZE))
     pygame.draw.aaline(fixed_surface, (255, 255, 255), (FIXED_WIDTH // 2, 0), (FIXED_WIDTH // 2, FIXED_HEIGHT))
 
-    font = pygame.font.Font(None, 48)
-    score_text = font.render(f"{state['player_score']} - {state['opponent_score']}", True, (255, 255, 255))
-    fixed_surface.blit(score_text, (FIXED_WIDTH // 2 - 30, 20))
-
     scaled_surface = pygame.transform.scale(fixed_surface, current_resolution)
     screen.blit(scaled_surface, (0, 0))
     pygame.display.flip()
+
+
 
 def main():
     sock, peer_addr, is_host = setup_network()
@@ -261,8 +253,6 @@ def main():
         'ball_y': FIXED_HEIGHT // 2,
         'ball_speed_x': BALL_SPEED,
         'ball_speed_y': BALL_SPEED,
-        'player_score':0,
-        'opponent_score':0
     }
 
     running = [True]
@@ -277,14 +267,9 @@ def main():
         handle_input(state)
         if is_host:
             update_ball(state)
-        # Send paddle position to opponent
-        if is_host:
-            game_state = pickle.dumps((state['paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y']))
-        else:
-             game_state = pickle.dumps((state['paddle_y'],))  # Clients send only their paddle position
 
-sock.sendto(game_state, peer_addr)
-
+        game_state = pickle.dumps((state['paddle_y'], state['ball_x'], state['ball_y'], state['ball_speed_x'], state['ball_speed_y']))
+        sock.sendto(game_state, peer_addr)
 
         draw_game(state, is_host)
         clock.tick(GAME_SPEED)
