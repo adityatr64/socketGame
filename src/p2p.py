@@ -5,7 +5,7 @@ import pickle
 
 PORT = 5555
 BUFFER_SIZE = 1024
-FIXED_WIDTH, FIXED_HEIGHT = 800, 600  # Fixed internal resolution
+FIXED_WIDTH, FIXED_HEIGHT = 800, 600 
 PADDLE_WIDTH, PADDLE_HEIGHT = 10, 100
 BALL_SIZE = 20
 BALL_SPEED = 3
@@ -71,7 +71,6 @@ def loading_screen():
                         if option_rect.collidepoint(event.pos):
                             selected_resolution = res
                             dropdown_open = False  # Close the dropdown
-                            # Don't change resolution yet, just store the selection
                             break
 
             if event.type == pygame.KEYDOWN:
@@ -125,7 +124,6 @@ def loading_screen():
         pygame.display.flip()
         clock.tick(GAME_SPEED)
 
-
 def setup_network():
     peer_ip, role, res_text = loading_screen()
     is_host = role.lower() == "yes"
@@ -137,7 +135,7 @@ def setup_network():
         current_resolution = (width, height)
         pygame.display.set_mode(current_resolution, pygame.RESIZABLE)
     except:
-        print("[ERROR] Invalid resolution format. Using default resolution.")
+        print("[ERROR] Invalid resolution format. Using default resolution.")   
         current_resolution = (FIXED_WIDTH, FIXED_HEIGHT)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -180,7 +178,6 @@ def setup_network():
 
     return sock, peer_addr, is_host
 
-
 def receive_data(sock, is_host, state, running):
     while running[0]:
         try:
@@ -193,7 +190,6 @@ def receive_data(sock, is_host, state, running):
         except:
             continue
 
-
 def handle_input(state):
     keys = pygame.key.get_pressed()
     if keys[pygame.K_w] and state['paddle_y'] > 0:
@@ -202,7 +198,6 @@ def handle_input(state):
         state['paddle_y'] += PADDLE_SPEED
     if keys[pygame.K_ESCAPE] or keys[pygame.K_q]:
         end_game()
-
 
 def update_ball(state):
     state['ball_x'] += state['ball_speed_x']
@@ -254,8 +249,6 @@ def draw_game(state, is_host):
     scaled_surface = pygame.transform.scale(fixed_surface, current_resolution)
     screen.blit(scaled_surface, (0, 0))
     pygame.display.flip()
-
-
 
 def main():
     sock, peer_addr, is_host = setup_network()
