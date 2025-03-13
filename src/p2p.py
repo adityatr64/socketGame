@@ -142,7 +142,7 @@ def setup_network():
         current_resolution = (FIXED_WIDTH, FIXED_HEIGHT)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(5)
+    sock.settimeout(25)
 
     if is_host:
         sock.bind(("0.0.0.0", PORT))
