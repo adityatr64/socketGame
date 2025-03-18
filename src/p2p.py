@@ -5,19 +5,18 @@ import struct
 
 PORT = 5555
 BUFFER_SIZE = 1024
-SOCKET_BUFFER_SIZE = 4096  # Increased buffer size
-FIXED_WIDTH, FIXED_HEIGHT = 800, 600  # Fixed internal resolution
+SOCKET_BUFFER_SIZE = 16384  # Increased buffer size
+FIXED_WIDTH, FIXED_HEIGHT = 960, 540  # Fixed internal resolution
 PADDLE_WIDTH, PADDLE_HEIGHT = 10, 100
 BALL_SIZE = 20
 BALL_SPEED = 3
 PADDLE_SPEED = 5    
 GAME_SPEED = 60
 NETWORK_UPDATE_FREQUENCY = 3  # Send updates every 3 frames
-INTERPOLATION_FACTOR = 0.2  # Lowered for smoother interpolation
+INTERPOLATION_FACTOR = 0.2  # Lowered for smoother interpoFIXED_HEIGHTlation
 
-# Initialize Pygame
 pygame.init()
-screen = pygame.display.set_mode((FIXED_WIDTH, FIXED_HEIGHT), pygame.RESIZABLE)
+screen = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
 pygame.display.set_caption("P2P Pong")
 clock = pygame.time.Clock()
 
@@ -39,8 +38,8 @@ def loading_screen():
     active_box = None
 
     # Dropdown options
-    resolutions = ["400x300","800x600", "1024x768", "1280x720"]
-    selected_resolution = resolutions[1]  # Default to 800x600
+    resolutions = ["400x225","960x540","800x450", "1280x720", "1920x1080"]
+    selected_resolution = resolutions[1]  
     dropdown_open = False
 
     while True:
