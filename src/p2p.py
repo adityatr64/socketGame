@@ -3,7 +3,7 @@ import socket
 import threading
 import struct
 
-PORT = 5555
+PORT = 42069
 BUFFER_SIZE = 1024
 SOCKET_BUFFER_SIZE = 16384 
 FIXED_WIDTH, FIXED_HEIGHT = 960, 540
@@ -26,15 +26,17 @@ current_resolution = (FIXED_WIDTH, FIXED_HEIGHT)
 def loading_screen():
     font = pygame.font.Font(None, 36)
     input_box_ip = pygame.Rect(200, 200, 400, 50)
-    input_box_role = pygame.Rect(200, 300, 400, 50)
+    host_button_yes = pygame.Rect(200, 300, 195, 50)
+    host_button_no = pygame.Rect(405, 300, 195, 50)
     dropdown_box = pygame.Rect(200, 400, 400, 50)
 
     color_inactive = pygame.Color('darkorange')
     color_active = pygame.Color('gold')
     color_hover = pygame.Color('yellow')
+    button_color = color_inactive
 
     ip_text = ''
-    role_text = ''
+    is_host = None
     active_box = None
 
     # Dropdown options
@@ -53,63 +55,60 @@ def loading_screen():
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if input_box_ip.collidepoint(event.pos):
                     active_box = 'ip'
-                elif input_box_role.collidepoint(event.pos):
-                    active_box = 'role'
+                elif host_button_yes.collidepoint(event.pos):
+                    is_host = True
+                    break
+                elif host_button_no.collidepoint(event.pos):
+                    is_host = False
+                    break
                 elif dropdown_box.collidepoint(event.pos):
                     dropdown_open = not dropdown_open
                 else:
                     active_box = None
                     
-                    # Only close dropdown if clicking outside dropdown area when it's open
                     if dropdown_open:
                         dropdown_area = pygame.Rect(200, 450, 400, 40 * len(resolutions))
                         if not dropdown_area.collidepoint(event.pos):
                             dropdown_open = False
 
-                # Handle dropdown item selection
                 if dropdown_open:
                     for i, res in enumerate(resolutions):
                         option_rect = pygame.Rect(200, 450 + i * 40, 400, 40)
                         if option_rect.collidepoint(event.pos):
                             selected_resolution = res
                             dropdown_open = False  # Close the dropdown
-                            # Don't change resolution yet, just store the selection
                             break
 
             if event.type == pygame.KEYDOWN:
                 if active_box == 'ip':
                     if event.key == pygame.K_RETURN:
-                        active_box = 'role'
+                        active_box = None
                     elif event.key == pygame.K_BACKSPACE:
                         ip_text = ip_text[:-1]
                     else:
                         ip_text += event.unicode
-                elif active_box == 'role':
-                    if event.key == pygame.K_RETURN and role_text.lower() in ['yes', 'no']:
-                        return ip_text, role_text, selected_resolution
-                    elif event.key == pygame.K_BACKSPACE:
-                        role_text = role_text[:-1]
-                    else:
-                        role_text += event.unicode
+
+        if is_host is not None:
+            return ip_text, "yes" if is_host else "no", selected_resolution
 
         color_ip = color_active if active_box == 'ip' else color_inactive
-        color_role = color_active if active_box == 'role' else color_inactive
 
         txt_surface_ip = font.render(ip_text, True, color_ip)
-        txt_surface_role = font.render(role_text, True, color_role)
         txt_surface_res = font.render(selected_resolution, True, color_active)
 
-        # Render input fields
         screen.blit(font.render("Enter Opponent's IP:", True, (255, 255, 255)), (200, 150))
-        screen.blit(font.render("Are you hosting? (yes/no):", True, (255, 255, 255)), (200, 250))
-        screen.blit(font.render("Select resolution:", True, (255, 255, 255)), (200, 350))
         screen.blit(txt_surface_ip, (input_box_ip.x + 10, input_box_ip.y + 10))
-        screen.blit(txt_surface_role, (input_box_role.x + 10, input_box_role.y + 10))
         screen.blit(txt_surface_res, (dropdown_box.x + 10, dropdown_box.y + 10))
+        screen.blit(font.render("Select resolution:", True, (255, 255, 255)), (200, 350))
 
         pygame.draw.rect(screen, color_ip, input_box_ip, 2)
-        pygame.draw.rect(screen, color_role, input_box_role, 2)
         pygame.draw.rect(screen, color_active, dropdown_box, 2)
+
+        # Host buttons
+        pygame.draw.rect(screen, button_color, host_button_yes, 0)
+        pygame.draw.rect(screen, button_color, host_button_no, 0)
+        screen.blit(font.render("Host", True, (0, 0, 0)), (host_button_yes.x + 50, host_button_yes.y + 10))
+        screen.blit(font.render("Client", True, (0, 0, 0)), (host_button_no.x + 50, host_button_no.y + 10))
 
         # Render dropdown options
         if dropdown_open:
@@ -132,7 +131,6 @@ def setup_network():
     peer_ip, role, res_text = loading_screen()
     is_host = role.lower() == "yes"
 
-    # Parse the resolution
     global current_resolution
     try:
         width, height = map(int, res_text.split('x'))
@@ -143,9 +141,7 @@ def setup_network():
         current_resolution = (FIXED_WIDTH, FIXED_HEIGHT)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(10)  # Lower timeout for more responsive networking
-    
-    # Configure socket buffer sizes
+    sock.settimeout(10)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCKET_BUFFER_SIZE)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, SOCKET_BUFFER_SIZE)
 
@@ -170,14 +166,13 @@ def setup_network():
         print(f"[CLIENT] Bound to {sock.getsockname()[1]}")
         print(f"[CLIENT] Connecting to host {peer_ip}:{PORT}...")
 
-        # More aggressive connection attempt
-        for _ in range(5):  # Try multiple times
+        for _ in range(5):
             sock.sendto(b"HELLO", (peer_ip, PORT))
             try:
                 msg, host_addr = sock.recvfrom(BUFFER_SIZE)
                 if msg == b"HELLO_ACK":
                     print("[CLIENT] Connected to host!")
-                    peer_addr = host_addr  # Set peer_addr for the client
+                    peer_addr = host_addr
                     break
                 else:
                     print("[CLIENT] Unexpected response from host.")
@@ -185,7 +180,7 @@ def setup_network():
             except socket.timeout:
                 print("[CLIENT] Retrying connection...")
                 continue
-        else:  # If the loop completes without a break
+        else:
             print("[CLIENT] No response from host after multiple attempts. Timeout.")
             exit()
 
@@ -196,35 +191,28 @@ def receive_data(sock, is_host, state, running):
     while running[0]:
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
-            # New packet structure: added score_changed flag
             packet_id, paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y, left_score, right_score, score_changed = struct.unpack('!iiiiiiiii', data)
             
-            # Store the packet ID to detect packet loss
             last_packet_id = state.get('last_packet_id', 0)
             if packet_id > last_packet_id:
                 state['last_packet_id'] = packet_id
                 
-                # Apply more sophisticated dead reckoning
                 previous_y = state.get('opponent_paddle_y_previous', paddle_y)
                 velocity = paddle_y - previous_y
                 state['opponent_paddle_y_previous'] = paddle_y
                 state['opponent_paddle_y_velocity'] = velocity
                 state['opponent_paddle_y_target'] = paddle_y
                 
-                # Update ball state based on role
                 if not is_host:
                     state['ball_x'] = ball_x
                     state['ball_y'] = ball_y
                     state['ball_speed_x'] = ball_speed_x
                     state['ball_speed_y'] = ball_speed_y
                 
-                # Always update scores if score_changed flag is set
                 if score_changed:
-                    # For both host and client, left score is always left player
-                    # and right score is always right player on the screen
                     state['left_score'] = left_score
                     state['right_score'] = right_score
-                    state['last_score_packet_id'] = packet_id  # Track when we last updated scores
+                    state['last_score_packet_id'] = packet_id
         except socket.timeout:
             # If timeout, apply prediction using stored velocity
             if 'opponent_paddle_y_velocity' in state:
@@ -257,13 +245,13 @@ def update_ball(state):
        (FIXED_WIDTH - 50 - PADDLE_WIDTH <= state['ball_x'] + BALL_SIZE <= FIXED_WIDTH - 50 and state['opponent_paddle_y'] <= state['ball_y'] + BALL_SIZE // 2 <= state['opponent_paddle_y'] + PADDLE_HEIGHT):
         state['ball_speed_x'] *= -1
 
-    if state['ball_x'] <= 0:  # Ball goes past the left side (Left player loses)
-        state['right_score'] += 1  # Right player scores
+    if state['ball_x'] <= 0:  
+        state['right_score'] += 1  
         score_changed = True
         reset_ball(state)
 
-    if state['ball_x'] >= FIXED_WIDTH:  # Ball goes past the right side (Right player loses)
-        state['left_score'] += 1  # Left player scores
+    if state['ball_x'] >= FIXED_WIDTH:
+        state['left_score'] += 1 
         score_changed = True
         reset_ball(state)
         
@@ -291,14 +279,12 @@ def draw_game(state, is_host):
         indicator_color = (255, 0, 0)  # Red
     pygame.draw.circle(fixed_surface, indicator_color, (20, 20), 10)
 
-    # Draw game elements
     pygame.draw.rect(fixed_surface, (255, 255, 255), (paddle_x, state['paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
     pygame.draw.rect(fixed_surface, (255, 255, 255), (opponent_x, state['opponent_paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
     pygame.draw.ellipse(fixed_surface, (255, 255, 255), (ball_x, state['ball_y'], BALL_SIZE, BALL_SIZE))
     pygame.draw.aaline(fixed_surface, (255, 255, 255), (FIXED_WIDTH // 2, 0), (FIXED_WIDTH // 2, FIXED_HEIGHT))
 
     font = pygame.font.Font(None, 36)
-    # Display scores - left score always goes on left side, right score always on right side
     score_text = font.render(f"{state['left_score']}   {state['right_score']}", True, (255, 255, 255))
     fixed_surface.blit(score_text, (FIXED_WIDTH // 2 - score_text.get_width() // 2, 10))
 
@@ -318,11 +304,10 @@ def main():
         'opponent_paddle_y_velocity': 0,
         'ball_x': FIXED_WIDTH // 2,
         'ball_y': FIXED_HEIGHT // 2,
-        'ball_speed_x': BALL_SPEED * (1 if is_host else -1),  # Ensure initial direction is correct
+        'ball_speed_x': BALL_SPEED * (1 if is_host else -1),
         'ball_speed_y': BALL_SPEED,
-        # Use absolute position scores instead of player/opponent
-        'left_score': 0,   # Score for the left side of the screen
-        'right_score': 0,  # Score for the right side of the screen
+        'left_score': 0,
+        'right_score': 0,
         'last_packet_id': 0,
         'last_score_packet_id': 0,
         'score_changed': False
@@ -339,7 +324,7 @@ def main():
             if event.type == pygame.QUIT:
                 running[0] = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_p:  # Add pause functionality
+                if event.key == pygame.K_p:
                     paused = True
                     while paused:
                         for pause_event in pygame.event.get():
@@ -365,23 +350,18 @@ def main():
                 state['ball_x'] += state['ball_speed_x']
                 state['ball_y'] += state['ball_speed_y']
                 
-                # Basic collision prediction
                 if state['ball_y'] <= 0 or state['ball_y'] + BALL_SIZE >= FIXED_HEIGHT:
                     state['ball_speed_y'] *= -1
 
         # Send network updates
         send_update = False
         if score_changed:
-            # Always send updates on score change
             send_update = True
         elif frame_counter % NETWORK_UPDATE_FREQUENCY == 0:
-            # Regular update frequency
             send_update = True
-            state['score_changed'] = False  # Reset score changed flag for regular updates
-            
+            state['score_changed'] = False            
         if send_update:
             packet_id += 1
-            # Updated packet structure to include score_changed flag
             game_state = struct.pack('!iiiiiiiii',
                 packet_id,
                 state['paddle_y'], 
@@ -389,8 +369,8 @@ def main():
                 state['ball_y'],
                 state['ball_speed_x'], 
                 state['ball_speed_y'],
-                state['left_score'],   # Left side score
-                state['right_score'],  # Right side score
+                state['left_score'],
+                state['right_score'], 
                 1 if state['score_changed'] else 0  # Score changed flag
             )
             sock.sendto(game_state, peer_addr)
