@@ -5,15 +5,15 @@ import struct
 
 PORT = 5555
 BUFFER_SIZE = 1024
-SOCKET_BUFFER_SIZE = 16384  # Increased buffer size
-FIXED_WIDTH, FIXED_HEIGHT = 960, 540  # Fixed internal resolution
+SOCKET_BUFFER_SIZE = 16384 
+FIXED_WIDTH, FIXED_HEIGHT = 960, 540
 PADDLE_WIDTH, PADDLE_HEIGHT = 10, 100
 BALL_SIZE = 20
 BALL_SPEED = 3
 PADDLE_SPEED = 5    
 GAME_SPEED = 60
-NETWORK_UPDATE_FREQUENCY = 3  # Send updates every 3 frames
-INTERPOLATION_FACTOR = 0.2  # Lowered for smoother interpoFIXED_HEIGHTlation
+NETWORK_UPDATE_FREQUENCY = 3
+INTERPOLATION_FACTOR = 0.2  
 
 pygame.init()
 screen = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
@@ -196,7 +196,8 @@ def receive_data(sock, is_host, state, running):
     while running[0]:
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
-            packet_id, paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y, player_score, opponent_score = struct.unpack('!iiiiiiii', data)
+            # New packet structure: added score_changed flag
+            packet_id, paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y, player_score, opponent_score, score_changed = struct.unpack('!iiiiiiiii', data)
             
             # Store the packet ID to detect packet loss
             last_packet_id = state.get('last_packet_id', 0)
@@ -217,8 +218,11 @@ def receive_data(sock, is_host, state, running):
                     state['ball_speed_x'] = ball_speed_x
                     state['ball_speed_y'] = ball_speed_y
                 
-                state['player_score'] = opponent_score  # Opponent's paddle is our score
-                state['opponent_score'] = player_score  # Our paddle is opponent's score
+                # Always update scores if score_changed flag is set
+                if score_changed:
+                    state['player_score'] = opponent_score  # Opponent's paddle is our score
+                    state['opponent_score'] = player_score  # Our paddle is opponent's score
+                    state['last_score_packet_id'] = packet_id  # Track when we last updated scores
         except socket.timeout:
             # If timeout, apply prediction using stored velocity
             if 'opponent_paddle_y_velocity' in state:
@@ -240,6 +244,7 @@ def handle_input(state):
 
 
 def update_ball(state):
+    score_changed = False
     state['ball_x'] += state['ball_speed_x']
     state['ball_y'] += state['ball_speed_y']
 
@@ -251,12 +256,16 @@ def update_ball(state):
         state['ball_speed_x'] *= -1
 
     if state['ball_x'] <= 0:  # Ball goes past the left side (Player Loses)
-        state['opponent_score'] += 1
+        state['local_opponent_score'] += 1  # Update local copy
+        score_changed = True
         reset_ball(state)
 
     if state['ball_x'] >= FIXED_WIDTH:  # Ball goes past the right side (Opponent Loses)
-        state['player_score'] += 1
+        state['local_player_score'] += 1  # Update local copy
+        score_changed = True
         reset_ball(state)
+        
+    return score_changed
 
 
 def draw_game(state, is_host):
@@ -287,7 +296,8 @@ def draw_game(state, is_host):
     pygame.draw.aaline(fixed_surface, (255, 255, 255), (FIXED_WIDTH // 2, 0), (FIXED_WIDTH // 2, FIXED_HEIGHT))
 
     font = pygame.font.Font(None, 36)
-    score_text = font.render(f"{state['player_score']}   {state['opponent_score']}", True, (255, 255, 255))
+    # Display locally tracked scores
+    score_text = font.render(f"{state['local_player_score']}   {state['local_opponent_score']}", True, (255, 255, 255))
     fixed_surface.blit(score_text, (FIXED_WIDTH // 2 - score_text.get_width() // 2, 10))
 
     scaled_surface = pygame.transform.scale(fixed_surface, current_resolution)
@@ -308,9 +318,14 @@ def main():
         'ball_y': FIXED_HEIGHT // 2,
         'ball_speed_x': BALL_SPEED * (1 if is_host else -1),  # Ensure initial direction is correct
         'ball_speed_y': BALL_SPEED,
-        'player_score': 0,
-        'opponent_score': 0,
-        'last_packet_id': 0
+        # Add separate local score tracking
+        'local_player_score': 0,
+        'local_opponent_score': 0,
+        'player_score': 0,  # Network scores (for synchronization)
+        'opponent_score': 0,  # Network scores (for synchronization)
+        'last_packet_id': 0,
+        'last_score_packet_id': 0,
+        'score_changed': False
     }
 
     running = [True]
@@ -336,9 +351,18 @@ def main():
                         pygame.time.wait(100)
 
         handle_input(state)
+        score_changed = False
+        
         if is_host:
-            update_ball(state)
-        elif frame_counter % 2 == 0:  # Client-side prediction for smoother ball movement
+            # Host controls ball physics and score
+            score_changed = update_ball(state)
+            if score_changed:
+                # Update network scores from local scores when they change
+                state['player_score'] = state['local_player_score']
+                state['opponent_score'] = state['local_opponent_score']
+                state['score_changed'] = True
+        elif frame_counter % 2 == 0:
+            # Client-side prediction for smoother ball movement
             # Only apply client prediction if not receiving frequent updates
             if state.get('last_update_time', 0) + 0.1 < pygame.time.get_ticks() / 1000:
                 state['ball_x'] += state['ball_speed_x']
@@ -348,18 +372,35 @@ def main():
                 if state['ball_y'] <= 0 or state['ball_y'] + BALL_SIZE >= FIXED_HEIGHT:
                     state['ball_speed_y'] *= -1
 
-        # Send network updates less frequently to reduce network load
-        if frame_counter % NETWORK_UPDATE_FREQUENCY == 0:
+        # Synchronize local and network scores (for client)
+        if not is_host and state.get('last_score_packet_id', 0) > state.get('last_applied_score_packet_id', 0):
+            state['local_player_score'] = state['player_score']
+            state['local_opponent_score'] = state['opponent_score']
+            state['last_applied_score_packet_id'] = state['last_score_packet_id']
+
+        # Send network updates
+        send_update = False
+        if score_changed:
+            # Always send updates on score change
+            send_update = True
+        elif frame_counter % NETWORK_UPDATE_FREQUENCY == 0:
+            # Regular update frequency
+            send_update = True
+            state['score_changed'] = False  # Reset score changed flag for regular updates
+            
+        if send_update:
             packet_id += 1
-            game_state = struct.pack('!iiiiiiii',
+            # Updated packet structure to include score_changed flag
+            game_state = struct.pack('!iiiiiiiii',
                 packet_id,
                 state['paddle_y'], 
                 state['ball_x'], 
                 state['ball_y'],
                 state['ball_speed_x'], 
                 state['ball_speed_y'],
-                state['player_score'], 
-                state['opponent_score']
+                state['local_player_score'],  # Send our local scores
+                state['local_opponent_score'],
+                1 if state['score_changed'] else 0  # Score changed flag
             )
             sock.sendto(game_state, peer_addr)
             
