@@ -1,17 +1,19 @@
 import pygame
 import socket
 import threading
-import pickle
-import struct # import struct
+import struct
 
 PORT = 5555
 BUFFER_SIZE = 1024
+SOCKET_BUFFER_SIZE = 4096  # Increased buffer size
 FIXED_WIDTH, FIXED_HEIGHT = 800, 600  # Fixed internal resolution
 PADDLE_WIDTH, PADDLE_HEIGHT = 10, 100
 BALL_SIZE = 20
 BALL_SPEED = 3
-PADDLE_SPEED = 5
+PADDLE_SPEED = 5    
 GAME_SPEED = 60
+NETWORK_UPDATE_FREQUENCY = 3  # Send updates every 3 frames
+INTERPOLATION_FACTOR = 0.2  # Lowered for smoother interpolation
 
 # Initialize Pygame
 pygame.init()
@@ -142,7 +144,11 @@ def setup_network():
         current_resolution = (FIXED_WIDTH, FIXED_HEIGHT)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(25)
+    sock.settimeout(10)  # Lower timeout for more responsive networking
+    
+    # Configure socket buffer sizes
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCKET_BUFFER_SIZE)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, SOCKET_BUFFER_SIZE)
 
     if is_host:
         sock.bind(("0.0.0.0", PORT))
@@ -165,18 +171,23 @@ def setup_network():
         print(f"[CLIENT] Bound to {sock.getsockname()[1]}")
         print(f"[CLIENT] Connecting to host {peer_ip}:{PORT}...")
 
-        sock.sendto(b"HELLO", (peer_ip, PORT))
-        
-        try:
-            msg, host_addr = sock.recvfrom(BUFFER_SIZE)
-            if msg == b"HELLO_ACK":
-                print("[CLIENT] Connected to host!")
-                peer_addr = host_addr  # Set peer_addr for the client
-            else:
-                print("[CLIENT] Unexpected response from host.")
-                exit()
-        except socket.timeout:
-            print("[CLIENT] No response from host. Timeout.")
+        # More aggressive connection attempt
+        for _ in range(5):  # Try multiple times
+            sock.sendto(b"HELLO", (peer_ip, PORT))
+            try:
+                msg, host_addr = sock.recvfrom(BUFFER_SIZE)
+                if msg == b"HELLO_ACK":
+                    print("[CLIENT] Connected to host!")
+                    peer_addr = host_addr  # Set peer_addr for the client
+                    break
+                else:
+                    print("[CLIENT] Unexpected response from host.")
+                    exit()
+            except socket.timeout:
+                print("[CLIENT] Retrying connection...")
+                continue
+        else:  # If the loop completes without a break
+            print("[CLIENT] No response from host after multiple attempts. Timeout.")
             exit()
 
     return sock, peer_addr, is_host
@@ -186,30 +197,37 @@ def receive_data(sock, is_host, state, running):
     while running[0]:
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
-            opponent_paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y, player_score, opponent_score = struct.unpack('!iiiiiii', data)
-
-            # Dead reckoning: track previous position and calculate velocity
-            previous_y = state.get('opponent_paddle_y_previous', opponent_paddle_y)
-            velocity = opponent_paddle_y - previous_y
-            state['opponent_paddle_y_previous'] = opponent_paddle_y
-
-            state['opponent_paddle_y_target'] = opponent_paddle_y #update target
-            #predict the next position
-            state['opponent_paddle_y_predicted'] = opponent_paddle_y + velocity
-
-            state['ball_x'] = ball_x
-            state['ball_y'] = ball_y
-            state['ball_speed_x'] = ball_speed_x
-            state['ball_speed_y'] = ball_speed_y
-            state['player_score'] = player_score
-            state['opponent_score'] = opponent_score
-
-            if not is_host:
-                state['ball_x'], state['ball_y'] = ball_x, ball_y
-
-        except:
+            packet_id, paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y, player_score, opponent_score = struct.unpack('!iiiiiiii', data)
+            
+            # Store the packet ID to detect packet loss
+            last_packet_id = state.get('last_packet_id', 0)
+            if packet_id > last_packet_id:
+                state['last_packet_id'] = packet_id
+                
+                # Apply more sophisticated dead reckoning
+                previous_y = state.get('opponent_paddle_y_previous', paddle_y)
+                velocity = paddle_y - previous_y
+                state['opponent_paddle_y_previous'] = paddle_y
+                state['opponent_paddle_y_velocity'] = velocity
+                state['opponent_paddle_y_target'] = paddle_y
+                
+                # Update ball state based on role
+                if not is_host:
+                    state['ball_x'] = ball_x
+                    state['ball_y'] = ball_y
+                    state['ball_speed_x'] = ball_speed_x
+                    state['ball_speed_y'] = ball_speed_y
+                
+                state['player_score'] = opponent_score  # Opponent's paddle is our score
+                state['opponent_score'] = player_score  # Our paddle is opponent's score
+        except socket.timeout:
+            # If timeout, apply prediction using stored velocity
+            if 'opponent_paddle_y_velocity' in state:
+                state['opponent_paddle_y_target'] += state['opponent_paddle_y_velocity'] * 0.5  # Reduce prediction effect
             continue
-
+        except Exception as e:
+            print(f"[ERROR] Receive error: {e}")
+            continue
 
 
 def handle_input(state):
@@ -254,6 +272,16 @@ def draw_game(state, is_host):
         paddle_x = 50
         opponent_x = FIXED_WIDTH - 50 - PADDLE_WIDTH
 
+    # Draw network quality indicator
+    network_lag = abs(state['opponent_paddle_y'] - state['opponent_paddle_y_target'])
+    indicator_color = (0, 255, 0)  # Green by default
+    if network_lag > 20:
+        indicator_color = (255, 255, 0)  # Yellow
+    if network_lag > 50:
+        indicator_color = (255, 0, 0)  # Red
+    pygame.draw.circle(fixed_surface, indicator_color, (20, 20), 10)
+
+    # Draw game elements
     pygame.draw.rect(fixed_surface, (255, 255, 255), (paddle_x, state['paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
     pygame.draw.rect(fixed_surface, (255, 255, 255), (opponent_x, state['opponent_paddle_y'], PADDLE_WIDTH, PADDLE_HEIGHT))
     pygame.draw.ellipse(fixed_surface, (255, 255, 255), (ball_x, state['ball_y'], BALL_SIZE, BALL_SIZE))
@@ -267,22 +295,28 @@ def draw_game(state, is_host):
     screen.blit(scaled_surface, (0, 0))
     pygame.display.flip()
 
+
 def main():
     sock, peer_addr, is_host = setup_network()
 
     state = {
         'paddle_y': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
         'opponent_paddle_y': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
+        'opponent_paddle_y_target': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
+        'opponent_paddle_y_previous': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
+        'opponent_paddle_y_velocity': 0,
         'ball_x': FIXED_WIDTH // 2,
         'ball_y': FIXED_HEIGHT // 2,
-        'ball_speed_x': BALL_SPEED,
+        'ball_speed_x': BALL_SPEED * (1 if is_host else -1),  # Ensure initial direction is correct
         'ball_speed_y': BALL_SPEED,
         'player_score': 0,
         'opponent_score': 0,
-        'opponent_paddle_y_target': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2, #add target variable
+        'last_packet_id': 0
     }
 
     running = [True]
+    frame_counter = 0
+    packet_id = 0
 
     threading.Thread(target=receive_data, args=(sock, is_host, state, running), daemon=True).start()
 
@@ -290,26 +324,55 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running[0] = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_p:  # Add pause functionality
+                    paused = True
+                    while paused:
+                        for pause_event in pygame.event.get():
+                            if pause_event.type == pygame.QUIT:
+                                running[0] = False
+                                paused = False
+                            elif pause_event.type == pygame.KEYDOWN and pause_event.key == pygame.K_p:
+                                paused = False
+                        pygame.time.wait(100)
 
         handle_input(state)
         if is_host:
             update_ball(state)
+        elif frame_counter % 2 == 0:  # Client-side prediction for smoother ball movement
+            # Only apply client prediction if not receiving frequent updates
+            if state.get('last_update_time', 0) + 0.1 < pygame.time.get_ticks() / 1000:
+                state['ball_x'] += state['ball_speed_x']
+                state['ball_y'] += state['ball_speed_y']
+                
+                # Basic collision prediction
+                if state['ball_y'] <= 0 or state['ball_y'] + BALL_SIZE >= FIXED_HEIGHT:
+                    state['ball_speed_y'] *= -1
 
-        #use struct to pack data
-        game_state = struct.pack('!iiiiiii',
-            state['paddle_y'], state['ball_x'], state['ball_y'],
-            state['ball_speed_x'], state['ball_speed_y'],
-            state['player_score'], state['opponent_score']
-        )
-        sock.sendto(game_state, peer_addr)
-
-        #interpolation
-        state['opponent_paddle_y'] += (state['opponent_paddle_y_target'] - state['opponent_paddle_y']) * 0.3
-
+        # Send network updates less frequently to reduce network load
+        if frame_counter % NETWORK_UPDATE_FREQUENCY == 0:
+            packet_id += 1
+            game_state = struct.pack('!iiiiiiii',
+                packet_id,
+                state['paddle_y'], 
+                state['ball_x'], 
+                state['ball_y'],
+                state['ball_speed_x'], 
+                state['ball_speed_y'],
+                state['player_score'], 
+                state['opponent_score']
+            )
+            sock.sendto(game_state, peer_addr)
+            
+        # More gradual interpolation for smoother movement
+        state['opponent_paddle_y'] += (state['opponent_paddle_y_target'] - state['opponent_paddle_y']) * INTERPOLATION_FACTOR
+        
         draw_game(state, is_host)
+        frame_counter += 1
         clock.tick(GAME_SPEED)
 
     end_game()
+
 
 def end_game():
     print("Exiting game...")
@@ -321,10 +384,12 @@ def end_game():
     pygame.quit()
     exit()
 
+
 def reset_ball(state):
     state['ball_x'], state['ball_y'] = FIXED_WIDTH // 2, FIXED_HEIGHT // 2
     state['ball_speed_x'] = BALL_SPEED
     state['ball_speed_y'] = BALL_SPEED
+
 
 if __name__ == "__main__":
     main()
