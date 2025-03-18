@@ -197,7 +197,7 @@ def receive_data(sock, is_host, state, running):
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
             # New packet structure: added score_changed flag
-            packet_id, paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y, player_score, opponent_score, score_changed = struct.unpack('!iiiiiiiii', data)
+            packet_id, paddle_y, ball_x, ball_y, ball_speed_x, ball_speed_y, left_score, right_score, score_changed = struct.unpack('!iiiiiiiii', data)
             
             # Store the packet ID to detect packet loss
             last_packet_id = state.get('last_packet_id', 0)
@@ -220,8 +220,10 @@ def receive_data(sock, is_host, state, running):
                 
                 # Always update scores if score_changed flag is set
                 if score_changed:
-                    state['player_score'] = opponent_score  # Opponent's paddle is our score
-                    state['opponent_score'] = player_score  # Our paddle is opponent's score
+                    # For both host and client, left score is always left player
+                    # and right score is always right player on the screen
+                    state['left_score'] = left_score
+                    state['right_score'] = right_score
                     state['last_score_packet_id'] = packet_id  # Track when we last updated scores
         except socket.timeout:
             # If timeout, apply prediction using stored velocity
@@ -255,13 +257,13 @@ def update_ball(state):
        (FIXED_WIDTH - 50 - PADDLE_WIDTH <= state['ball_x'] + BALL_SIZE <= FIXED_WIDTH - 50 and state['opponent_paddle_y'] <= state['ball_y'] + BALL_SIZE // 2 <= state['opponent_paddle_y'] + PADDLE_HEIGHT):
         state['ball_speed_x'] *= -1
 
-    if state['ball_x'] <= 0:  # Ball goes past the left side (Player Loses)
-        state['local_opponent_score'] += 1  # Update local copy
+    if state['ball_x'] <= 0:  # Ball goes past the left side (Left player loses)
+        state['right_score'] += 1  # Right player scores
         score_changed = True
         reset_ball(state)
 
-    if state['ball_x'] >= FIXED_WIDTH:  # Ball goes past the right side (Opponent Loses)
-        state['local_player_score'] += 1  # Update local copy
+    if state['ball_x'] >= FIXED_WIDTH:  # Ball goes past the right side (Right player loses)
+        state['left_score'] += 1  # Left player scores
         score_changed = True
         reset_ball(state)
         
@@ -296,8 +298,8 @@ def draw_game(state, is_host):
     pygame.draw.aaline(fixed_surface, (255, 255, 255), (FIXED_WIDTH // 2, 0), (FIXED_WIDTH // 2, FIXED_HEIGHT))
 
     font = pygame.font.Font(None, 36)
-    # Display locally tracked scores
-    score_text = font.render(f"{state['local_player_score']}   {state['local_opponent_score']}", True, (255, 255, 255))
+    # Display scores - left score always goes on left side, right score always on right side
+    score_text = font.render(f"{state['left_score']}   {state['right_score']}", True, (255, 255, 255))
     fixed_surface.blit(score_text, (FIXED_WIDTH // 2 - score_text.get_width() // 2, 10))
 
     scaled_surface = pygame.transform.scale(fixed_surface, current_resolution)
@@ -318,11 +320,9 @@ def main():
         'ball_y': FIXED_HEIGHT // 2,
         'ball_speed_x': BALL_SPEED * (1 if is_host else -1),  # Ensure initial direction is correct
         'ball_speed_y': BALL_SPEED,
-        # Add separate local score tracking
-        'local_player_score': 0,
-        'local_opponent_score': 0,
-        'player_score': 0,  # Network scores (for synchronization)
-        'opponent_score': 0,  # Network scores (for synchronization)
+        # Use absolute position scores instead of player/opponent
+        'left_score': 0,   # Score for the left side of the screen
+        'right_score': 0,  # Score for the right side of the screen
         'last_packet_id': 0,
         'last_score_packet_id': 0,
         'score_changed': False
@@ -357,9 +357,6 @@ def main():
             # Host controls ball physics and score
             score_changed = update_ball(state)
             if score_changed:
-                # Update network scores from local scores when they change
-                state['player_score'] = state['local_player_score']
-                state['opponent_score'] = state['local_opponent_score']
                 state['score_changed'] = True
         elif frame_counter % 2 == 0:
             # Client-side prediction for smoother ball movement
@@ -371,12 +368,6 @@ def main():
                 # Basic collision prediction
                 if state['ball_y'] <= 0 or state['ball_y'] + BALL_SIZE >= FIXED_HEIGHT:
                     state['ball_speed_y'] *= -1
-
-        # Synchronize local and network scores (for client)
-        if not is_host and state.get('last_score_packet_id', 0) > state.get('last_applied_score_packet_id', 0):
-            state['local_player_score'] = state['player_score']
-            state['local_opponent_score'] = state['opponent_score']
-            state['last_applied_score_packet_id'] = state['last_score_packet_id']
 
         # Send network updates
         send_update = False
@@ -398,8 +389,8 @@ def main():
                 state['ball_y'],
                 state['ball_speed_x'], 
                 state['ball_speed_y'],
-                state['local_player_score'],  # Send our local scores
-                state['local_opponent_score'],
+                state['left_score'],   # Left side score
+                state['right_score'],  # Right side score
                 1 if state['score_changed'] else 0  # Score changed flag
             )
             sock.sendto(game_state, peer_addr)
