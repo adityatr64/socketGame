@@ -168,15 +168,16 @@ def loading_screen():
         clock.tick(GAME_SPEED)
 
 def discover_host(room_id, timeout=5):
-    """Send a UDP broadcast to discover a host with the given room ID."""
+    """Send a UDP broadcast to find a host and wait for a response."""
     discovery_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     discovery_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     discovery_sock.settimeout(timeout)
 
+    broadcast_address = "10.1.5.255"  # Change this to your LAN broadcast address
     message = json.dumps({"type": "DISCOVER", "room": room_id}).encode('utf-8')
 
-    print(f"[CLIENT] Broadcasting discovery request for room {room_id}...")
-    discovery_sock.sendto(message, ('255.255.255.255', PORT))
+    print(f"[CLIENT] Broadcasting discovery request for room {room_id} to {broadcast_address}...")
+    discovery_sock.sendto(message, (broadcast_address, PORT))
 
     try:
         while True:
@@ -192,6 +193,7 @@ def discover_host(room_id, timeout=5):
         return None
     finally:
         discovery_sock.close()
+
 
 
 
@@ -212,12 +214,15 @@ def handle_discovery_requests(sock, room_id):
             if request.get("type") == "DISCOVER" and request.get("room") == room_id:
                 print(f"[HOST] Sending discovery response to {addr}")
                 response = json.dumps({"type": "HOST_FOUND", "room": room_id}).encode('utf-8')
-                sock.sendto(response, addr)  # Send the host's IP back
+
+                # Send the response **back to the client**
+                sock.sendto(response, addr)
 
         except socket.timeout:
-            continue  # Keep listening
+            continue  # Keep listening instead of exiting
         except json.JSONDecodeError:
             print("[HOST] Invalid discovery message received")
+
 
 
 
