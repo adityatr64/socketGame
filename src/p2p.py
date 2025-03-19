@@ -10,15 +10,15 @@ import string
 PORT = 42069
 DISCOVERY_PORT = 42070
 BUFFER_SIZE = 1024
-SOCKET_BUFFER_SIZE = 16384
+SOCKET_BUFFER_SIZE = 65536
 FIXED_WIDTH, FIXED_HEIGHT = 960, 540
 PADDLE_WIDTH, PADDLE_HEIGHT = 10, 100
 BALL_SIZE = 20
 BALL_SPEED = 3
 PADDLE_SPEED = 5
 GAME_SPEED = 60
-NETWORK_UPDATE_FREQUENCY = 3
-INTERPOLATION_FACTOR = 0.2
+NETWORK_UPDATE_FREQUENCY = 2
+INTERPOLATION_FACTOR = 0.5  # Faster opponent paddle smoothing
 ROOM_BROADCAST_INTERVAL = 3  # Seconds between room broadcasts
 ROOM_TIMEOUT = 15  # Seconds before a room is considered inactive
 
@@ -151,46 +151,47 @@ class RoomManager:
             self.discovery_socket.close()
 
 def room_selection_screen():
-    """UI for selecting or creating a room"""
+    """Improved UI for selecting or creating a room"""
     font = pygame.font.Font(None, 36)
     small_font = pygame.font.Font(None, 24)
-    
+
     create_room_button = pygame.Rect(200, 100, 400, 50)
     refresh_button = pygame.Rect(650, 150, 100, 30)
-    room_name_input = pygame.Rect(200, 170, 400, 50)
-    
+    room_name_input = pygame.Rect(200, 200, 400, 50)
+
     color_inactive = pygame.Color('darkorange')
     color_active = pygame.Color('gold')
     color_hover = pygame.Color('yellow')
     button_color = color_inactive
-    
+    input_color = color_inactive
+
     active_box = None
     room_name = "My Game Room"
     selected_resolution = "960x540"
     scroll_offset = 0
     max_visible_rooms = 5
-    
+
     room_manager = RoomManager()
     room_manager.start(False)  # Start in client mode initially
     last_refresh = time.time()
-    
+
     while True:
-        screen.fill((0, 0, 0))
+        screen.fill((30, 30, 30))  # Dark background
         mouse_pos = pygame.mouse.get_pos()
         current_time = time.time()
-        
+
         # Auto-refresh room list every 3 seconds
         if current_time - last_refresh > 3:
             last_refresh = current_time
-        
+
         rooms = room_manager.get_rooms()
-        
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 room_manager.stop()
                 pygame.quit()
                 exit()
-                
+
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if create_room_button.collidepoint(event.pos):
                     room_manager.stop()
@@ -201,59 +202,55 @@ def room_selection_screen():
                     active_box = 'room_name'
                 else:
                     active_box = None
-                    
+
                 # Check if clicked on a room in the list
-                for i, room in enumerate(rooms[scroll_offset:scroll_offset+max_visible_rooms]):
+                for i, room in enumerate(rooms[scroll_offset:scroll_offset + max_visible_rooms]):
                     room_rect = pygame.Rect(200, 250 + i * 60, 400, 50)
                     if room_rect.collidepoint(event.pos):
                         room_manager.stop()
                         return {"role": "client", "peer_ip": room.host_ip, "resolution": selected_resolution, "room_name": room.name}
-            
-            # Handle scrolling for room list
-            if event.type == pygame.MOUSEWHEEL:
-                if len(rooms) > max_visible_rooms:
-                    scroll_offset = max(0, min(scroll_offset - event.y, len(rooms) - max_visible_rooms))
-                    
-            if event.type == pygame.KEYDOWN:
-                if active_box == 'room_name':
-                    if event.key == pygame.K_RETURN:
-                        active_box = None
-                    elif event.key == pygame.K_BACKSPACE:
-                        room_name = room_name[:-1]
-                    else:
-                        room_name += event.unicode
-        
+
+            if event.type == pygame.KEYDOWN and active_box == 'room_name':
+                if event.key == pygame.K_RETURN:
+                    active_box = None
+                elif event.key == pygame.K_BACKSPACE:
+                    room_name = room_name[:-1]
+                else:
+                    room_name += event.unicode
+
+        # Change button color on hover
+        button_color = color_hover if create_room_button.collidepoint(mouse_pos) else color_inactive
+        input_color = color_active if active_box == 'room_name' else color_inactive
+
         # Draw UI elements
-        color_name = color_active if active_box == 'room_name' else color_inactive
-        
-        # Draw buttons and input boxes
-        pygame.draw.rect(screen, button_color, create_room_button, 0)
-        pygame.draw.rect(screen, button_color, refresh_button, 0)
-        pygame.draw.rect(screen, color_name, room_name_input, 2)
-        
+        pygame.draw.rect(screen, button_color, create_room_button, border_radius=10)
+        pygame.draw.rect(screen, color_inactive, refresh_button, border_radius=5)
+        pygame.draw.rect(screen, input_color, room_name_input, 2, border_radius=5)
+
         # Draw text
         screen.blit(font.render("Create Room", True, (0, 0, 0)), (create_room_button.x + 120, create_room_button.y + 10))
         screen.blit(small_font.render("Refresh", True, (0, 0, 0)), (refresh_button.x + 20, refresh_button.y + 8))
-        screen.blit(font.render("Room Name:", True, (255, 255, 255)), (200, 140))
-        screen.blit(font.render(room_name, True, color_name), (room_name_input.x + 10, room_name_input.y + 10))
-        screen.blit(font.render("Available Rooms:", True, (255, 255, 255)), (200, 220))
-        
+        screen.blit(font.render("Room Name:", True, (255, 255, 255)), (200, 165))
+        screen.blit(font.render(room_name, True, input_color), (room_name_input.x + 10, room_name_input.y + 10))
+        screen.blit(font.render("Available Rooms:", True, (255, 255, 255)), (200, 260))
+
         # Draw room list
         if not rooms:
             msg = "No rooms found. Create one or wait for broadcasts."
-            screen.blit(small_font.render(msg, True, (200, 200, 200)), (250, 300))
+            screen.blit(small_font.render(msg, True, (200, 200, 200)), (250, 310))
         else:
-            for i, room in enumerate(rooms[scroll_offset:scroll_offset+max_visible_rooms]):
+            for i, room in enumerate(rooms[scroll_offset:scroll_offset + max_visible_rooms]):
                 room_rect = pygame.Rect(200, 250 + i * 60, 400, 50)
-                pygame.draw.rect(screen, color_inactive, room_rect, 0)
+                pygame.draw.rect(screen, (100, 100, 100, 180), room_rect, border_radius=5)
                 
                 # Room info display
-                screen.blit(font.render(room.name, True, (0, 0, 0)), (room_rect.x + 10, room_rect.y + 10))
+                screen.blit(font.render(room.name, True, (255, 255, 255)), (room_rect.x + 10, room_rect.y + 10))
                 player_text = f"Players: {room.player_count}/2"
-                screen.blit(small_font.render(player_text, True, (0, 0, 0)), (room_rect.x + 300, room_rect.y + 18))
-        
+                screen.blit(small_font.render(player_text, True, (200, 200, 200)), (room_rect.x + 300, room_rect.y + 18))
+
         pygame.display.flip()
         clock.tick(GAME_SPEED)
+
 
 def setup_network(room_data):
     role = room_data["role"]
@@ -327,8 +324,9 @@ def setup_network(room_data):
 
     return sock, peer_addr, is_host
 
-# The rest of your game code remains the same
 def receive_data(sock, is_host, state, running):
+    last_received_time = time.time()
+
     while running[0]:
         try:
             data, _ = sock.recvfrom(BUFFER_SIZE)
@@ -337,31 +335,33 @@ def receive_data(sock, is_host, state, running):
             last_packet_id = state.get('last_packet_id', 0)
             if packet_id > last_packet_id:
                 state['last_packet_id'] = packet_id
-                
-                previous_y = state.get('opponent_paddle_y_previous', paddle_y)
-                velocity = paddle_y - previous_y
-                state['opponent_paddle_y_previous'] = paddle_y
-                state['opponent_paddle_y_velocity'] = velocity
                 state['opponent_paddle_y_target'] = paddle_y
-                
+                state['opponent_paddle_y_previous'] = paddle_y
+
+                # Only update ball position if host sent new data
                 if not is_host:
                     state['ball_x'] = ball_x
                     state['ball_y'] = ball_y
                     state['ball_speed_x'] = ball_speed_x
                     state['ball_speed_y'] = ball_speed_y
+
+                last_received_time = time.time()
                 
                 if score_changed:
                     state['left_score'] = left_score
                     state['right_score'] = right_score
-                    state['last_score_packet_id'] = packet_id
+
         except socket.timeout:
-            # If timeout, apply prediction using stored velocity
-            if 'opponent_paddle_y_velocity' in state:
-                state['opponent_paddle_y_target'] += state['opponent_paddle_y_velocity'] * 0.5  # Reduce prediction effect
+            # If timeout, predict ball movement instead of freezing
+            if not is_host and time.time() - last_received_time > 0.1:
+                state['ball_x'] += state['ball_speed_x']
+                state['ball_y'] += state['ball_speed_y']
+                
+                if state['ball_y'] <= 0 or state['ball_y'] + BALL_SIZE >= FIXED_HEIGHT:
+                    state['ball_speed_y'] *= -1  # Bounce on walls
+                
             continue
-        except Exception as e:
-            print(f"[ERROR] Receive error: {e}")
-            continue
+
 
 def handle_input(state):
     keys = pygame.key.get_pressed()
