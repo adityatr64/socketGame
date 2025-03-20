@@ -25,6 +25,8 @@ P2P Pong is a networked version of the classic Pong game, developed as part of a
    ```sh
    git clone https://github.com/adityatr64/socketGame
    # ;; or;;
-   gir clone https://github.com/aniruddhajoshi100/socketGame
+   git clone https://github.com/aniruddhajoshi100/socketGame
    cd socketGame
    ```
+
+2. Run the file
