@@ -18,7 +18,7 @@ BALL_SPEED = 3
 PADDLE_SPEED = 5
 GAME_SPEED = 60
 NETWORK_UPDATE_FREQUENCY = 2
-INTERPOLATION_FACTOR = 0.5  
+INTERPOLATION_FACTOR = 0.2
 ROOM_BROADCAST_INTERVAL = 2
 ROOM_TIMEOUT = 60
 
@@ -216,7 +216,7 @@ def room_selection_screen():
                     active_box = None
 
                 for i, room in enumerate(rooms[scroll_offset:scroll_offset + max_visible_rooms]):
-                    room_rect = pygame.Rect(200, 300 + i * 60, 400, 50)
+                    room_rect = pygame.Rect(200, 410 + i * 60, 400, 50)
                     if room_rect.collidepoint(event.pos):
                         room_manager.stop()
                         return {"role": "client", "peer_ip": room.host_ip, "local_resolution": selected_resolution, 
@@ -259,7 +259,7 @@ def room_selection_screen():
             screen.blit(small_font.render(msg, True, (200, 200, 200)), (250, 410))
         else:
             for i, room in enumerate(rooms[scroll_offset:scroll_offset + max_visible_rooms]):
-                room_rect = pygame.Rect(200, 300 + i * 60, 400, 50)
+                room_rect = pygame.Rect(200, 410 + i * 60, 400, 50)
                 pygame.draw.rect(screen, (100, 100, 100, 180), room_rect, border_radius=5)
                 
                 screen.blit(font.render(room.name, True, (255, 255, 255)), (room_rect.x + 10, room_rect.y + 10))
@@ -376,8 +376,9 @@ def receive_data(sock, is_host, state, running):
             last_packet_id = state.get('last_packet_id', 0)
             if packet_id > last_packet_id:
                 state['last_packet_id'] = packet_id
-                state['opponent_paddle_y_target'] = paddle_y
-                state['opponent_paddle_y_previous'] = paddle_y
+                state['opponent_paddle_y_previous'] = state['opponent_paddle_y_target']  # Store previous position
+                state['opponent_paddle_y_target'] = paddle_y  # Update target position
+                state['last_update_time'] = time.time()  # Update the time of the last update
 
                 if not is_host:
                     state['ball_x'] = ball_x
@@ -489,20 +490,20 @@ def main():
     sock, peer_addr, is_host, username, opponent_username = setup_network(room_data)
 
     state = {
-        'paddle_y': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
-        'opponent_paddle_y': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
-        'opponent_paddle_y_target': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
-        'opponent_paddle_y_previous': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
-        'opponent_paddle_y_velocity': 0,
-        'ball_x': FIXED_WIDTH // 2,
-        'ball_y': FIXED_HEIGHT // 2,
-        'ball_speed_x': BALL_SPEED * (1 if is_host else -1),
-        'ball_speed_y': BALL_SPEED,
-        'left_score': 0,
-        'right_score': 0,
-        'last_packet_id': 0,
-        'last_score_packet_id': 0,
-        'score_changed': False
+    'paddle_y': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
+    'opponent_paddle_y': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
+    'opponent_paddle_y_target': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
+    'opponent_paddle_y_previous': (FIXED_HEIGHT - PADDLE_HEIGHT) // 2,
+    'last_update_time': time.time(),  # Store the time of the last update
+    'ball_x': FIXED_WIDTH // 2,
+    'ball_y': FIXED_HEIGHT // 2,
+    'ball_speed_x': BALL_SPEED * (1 if is_host else -1),
+    'ball_speed_y': BALL_SPEED,
+    'left_score': 0,
+    'right_score': 0,
+    'last_packet_id': 0,
+    'last_score_packet_id': 0,
+    'score_changed': False
     }
 
     running = [True]
@@ -562,8 +563,12 @@ def main():
                 1 if state['score_changed'] else 0 
             )
             sock.sendto(game_state, peer_addr)
-            
-        state['opponent_paddle_y'] += (state['opponent_paddle_y_target'] - state['opponent_paddle_y']) * INTERPOLATION_FACTOR
+        
+        # Time-based interpolation
+        current_time = time.time()
+        time_since_last_update = current_time - state['last_update_time']
+        interpolation_factor = min(1.0, time_since_last_update * NETWORK_UPDATE_FREQUENCY)
+        state['opponent_paddle_y'] = state['opponent_paddle_y_previous'] + (state['opponent_paddle_y_target'] - state['opponent_paddle_y_previous']) * interpolation_factor
         
         draw_game(state, is_host, username, opponent_username)
         frame_counter += 1
